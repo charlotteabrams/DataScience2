@@ -1,0 +1,233 @@
+___
+title: "P8106_hw2"
+author: "Charlotte Abrams"
+date: "3/15/2019"
+output: github_document
+___
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(caret)
+library(boot)
+library(glmnet)
+library(pls)
+library(splines)
+library(mgcv)
+```
+#Import Data
+```{r}
+concrete <- read.csv("~/Documents/Charlotte/Columbia/Spring 2019/DSII/HW2/Data/concrete.csv")
+```
+
+# Matrix of predictors
+```{r}
+x <- model.matrix(CompressiveStrength~.,concrete)[,-1]
+```
+
+#Vector of response
+```{r}
+y <- concrete$CompressiveStrength
+```
+#  A  ###############################################################################################
+```{r, fig.height=5}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+```
+
+#Create scatter plots of response vs. predictors using the function featurePlot()
+```{r}
+featurePlot(x, y, plot = "scatter", labels = c("","Compressive Strength"),
+            type = c("p"), layout = c(4, 2))
+```
+
+
+#  B  ###############################################################################################
+#Perform polynomial regression to predict compressive strength using water as the
+#predictor. For 1 < d < 4, use cross-validation to select the optimal degree d for
+#the polynomial. What degree was chosen, and how does this compare to the results
+#of hypothesis testing using ANOVA? Make a plot of different polynomial fits to the
+#data.
+```{r}
+fit1 <- lm(CompressiveStrength~Water, data = concrete) #First degree
+fit2 <- lm(CompressiveStrength~poly(Water,2), data = concrete) #Squared
+fit3 <- lm(CompressiveStrength~poly(Water,3), data = concrete) #Cubed
+fit4 <- lm(CompressiveStrength~poly(Water,4), data = concrete) #Fourth power
+
+plot1 <- ggplot(data = concrete, aes(x = Water, y = CompressiveStrength)) +
+  geom_point(color = rgb(.2, .4, .2, .5))
+
+plot1
+
+plot(fit1) + plot(fit2) + plot(fit3) + plot(fit4) 
+```
+
+#Calculate the 10-fold CV MSE using the functiontrain().
+# 10-fold CV
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+set.seed(1)
+lmFit1 <- train(CompressiveStrength~Water,
+               data = concrete,
+               method = "lm",
+               trControl = ctrl)
+lmFit1
+```
+# RMSE      Rsquared    MAE     
+# 15.99058  0.09107776  13.08764
+```{r}
+set.seed(1)
+lmFit2 <- train(CompressiveStrength~poly(Water,2),
+                data = concrete,
+                method = "lm",
+                trControl = ctrl)
+lmFit2
+```
+# RMSE      Rsquared   MAE     
+# 15.52028  0.1460514  12.46876
+```{r}
+set.seed(1)
+lmFit3 <- train(CompressiveStrength~poly(Water,3),
+                data = concrete,
+                method = "lm",
+                trControl = ctrl)
+lmFit3
+```
+# RMSE      Rsquared   MAE     
+# 15.17431  0.1801495  12.25177
+```{r}
+set.seed(1)
+lmFit4 <- train(CompressiveStrength~poly(Water,4),
+                data = concrete,
+                method = "lm",
+                trControl = ctrl)
+lmFit4
+```
+# RMSE      Rsquared  MAE     
+# 15.02604  0.199201  12.09692
+```{r}
+anova(fit1,fit2,fit3,fit4)
+```
+#Res.  Df    RSS     Df   Sum of Sq    F         Pr(>F)    
+#1     1028  263085                                  
+#2     1027  247712  1    15372.8      68.140    4.652e-16 ***
+#3     1026  235538  1    12174.0      53.962    4.166e-13 ***
+#4     1025  231246  1    4291.5       19.022    1.423e-05 ***
+
+#The Mean Square Error (RMSE) is the smallest when ussing the Y~Water^4 model (RMSE=15.02604), 
+#therefore, it is the best model to use for this analysis. The models with the highest RMSE values and 
+#the worst models for this adanlysis would be the Y~Water model with RMSE=15.99058. This aligns with 
+#hypothesis testing using ANOVA.
+
+
+#  C  ###############################################################################################
+#Fit a smoothing spline using water as the predictor for a range of degrees of
+#freedom, as well as the degree of freedom obtained by generalized cross-validation,
+#and plot the resulting fits. Describe the results obtained.
+
+#Generate test data
+```{r}
+Waterlims <- range(concrete$Water)
+Water.grid <- seq(from = Waterlims[1],to = Waterlims[2])
+```
+
+#Cross-Validation Fit
+```{r}
+fit.ss <- smooth.spline(concrete$Water, concrete$CompressiveStrength)
+fit.ss
+```
+## [1] 68.88205
+
+```{r}
+pred.ss <- predict(fit.ss,
+                   x = Water.grid)
+pred.ss.df <- data.frame(pred = pred.ss$y,
+                         Water = Water.grid)
+```
+#Fit ss1 (df=50)
+```{r}
+fit.ss1 <- smooth.spline(concrete$Water, concrete$CompressiveStrength, df = 50)
+fit.ss1
+```
+## [1] 50.00509
+
+```{r}
+pred.ss1 <- predict(fit.ss1, 
+                    x = Water.grid)
+pred.ss.df1 <- data.frame(pred = pred.ss1$y, 
+                          Water = Water.grid)
+```
+#Fit ss2 (df=60)
+```{r}
+fit.ss2 <- smooth.spline(concrete$Water, concrete$CompressiveStrength, df = 60)
+fit.ss2
+```
+## [1] 59.99469
+
+```{r}
+pred.ss2 <- predict(fit.ss2, 
+                    x = Water.grid)
+pred.ss.df2 <- data.frame(pred = pred.ss2$y, 
+                          Water = Water.grid)
+```
+#Fit ss3 (df=70)
+```{r}
+fit.ss3 <- smooth.spline(concrete$Water, concrete$CompressiveStrength, df = 70)
+fit.ss3
+```
+## [1] 70.00499
+
+```{r}
+pred.ss3 <- predict(fit.ss3, 
+                    x = Water.grid)
+pred.ss.df3 <- data.frame(pred = pred.ss3$y, 
+                          Water = Water.grid)
+```
+
+#Plots
+```{r}
+smooth_spline_fits <- plot1 + geom_line(aes(x = Water, y = pred), data = pred.ss.df1,
+                                 color = rgb(.8, .1, .1, 1)) + 
+  geom_line(aes(x = Water, y = pred), data = pred.ss.df2,
+            color = rgb(0, 0, 1, 1)) + 
+  geom_line(aes(x = Water, y = pred), data = pred.ss.df3,
+            color = rgb(1, 0, 1, 1)) + 
+  geom_line(aes(x = Water, y = pred), data = pred.ss.df,
+            color = rgb(.2, .2, .4, 1)) + 
+  theme_bw()
+smooth_spline_fits
+```
+
+#Through generalized cross-validation, we found that the degree of freedom obtained
+#is 68.88205. Thus, I tested out other models with dfs around 68.88205 (50, 60, and 70).
+#The results are shown in the comments under each model.
+
+#  D  ###############################################################################################
+#Fit a GAM using all the predictors. Plot the results and explain your findings.
+```{r}
+gam.m1 <- gam(CompressiveStrength~Cement+Water+BlastFurnaceSlag+FlyAsh+Superplasticizer+CoarseAggregate+FineAggregate+Age, data = concrete)
+gam.m2 <- gam(CompressiveStrength~Cement+s(Water)+BlastFurnaceSlag+FlyAsh+Superplasticizer+CoarseAggregate+FineAggregate+Age, data = concrete)
+
+anova(gam.m1, gam.m2, test = "F")
+```
+#Resid. Df Resid. Dev     Df Deviance      F   Pr(>F)
+#1    1021.0     110413                                
+#2    1013.4     106140 7.5562   4272.8 5.4038 2.01e-06
+
+```{r}
+plot(gam.m2)
+
+vis.gam(gam.m1, view = c("Water","FlyAsh"),
+       plot.type = "contour", color = "topo")
+
+vis.gam(gam.m2, view = c("Water","FlyAsh"),
+        plot.type = "contour", color = "topo")
+```

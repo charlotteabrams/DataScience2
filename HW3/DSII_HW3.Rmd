@@ -1,0 +1,191 @@
+---
+title: "Data Science II Homework 3"
+author: "Charlotte Abrams"
+date: "4/09/2019"
+output: github_document
+---
+___
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ISLR)
+library(MASS)
+library(caret)
+library(class)
+library(glmnet)
+library(e1071)
+library(mlbench)
+library(pROC)
+library(AppliedPredictiveModeling)
+```
+
+### Part (a)
+Produce some graphical summaries of the Weekly data.
+
+```{r}
+data("Weekly")
+
+#Summarize data
+summary(Weekly)
+
+transparentTheme(trans = .4)
+featurePlot(x = Weekly[, 1:7],
+  y = Weekly$Direction,
+  scales = list(x = list(relation = "free"),
+    y = list(relation = "free")),
+  plot = "density", pch = "|",
+  auto.key = list(columns = 2))
+
+#Plot data
+plot(Today~Lag1, col = "darkred", data = Weekly)
+simplelm = lm(Today~Lag1, data = Weekly)
+abline(simplelm, lwd = 3, col = "darkgreen")
+
+pairs(Weekly)  
+```
+
+### Part (b)
+Use the full data set to perform a logistic regression with Direction as the response
+and the five Lag variables plus Volume as predictors. Do any of the predictors appear
+to be statistically significant? If so, which ones?
+```{r}
+glm.fit <- glm(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume,
+               data = Weekly,
+               family = binomial)
+summary(glm.fit)
+contrasts(Weekly$Direction)
+```
+- As we can see above, Lag2 is the only predictor that appears to be statistically significant (p-value: 0.0296).
+
+### Part (c)
+Compute the confusion matrix and overall fraction of correct predictions. Briefly
+explain what the confusion matrix is telling you.
+```{r}
+test.pred.prob <- predict(glm.fit, 
+                         type = "response",
+                         newdata = Weekly)
+test.pred <- rep("Down", length(test.pred.prob))
+test.pred[test.pred.prob > 0.5] <- "Up"
+
+confusionMatrix(data = as.factor(test.pred),
+                reference = Weekly$Direction,
+                positive = "Down")
+```
+- From the Confusion Matrix, we can see that we're predicting most of the cases as positives (UP). Becuase of this, we're good at finding the true positives, but also have 430/987 false positives. This also means that we find 430 false positives. Of the true negatives, we're only identifying 54/484 of them correctly, which is not great.
+
+### Part (d)
+Plot the ROC curve using the predicted probability from logistic regression and report
+the AUC.
+```{r}
+roc.glm <- roc(Weekly$Direction, test.pred.prob)
+plot(roc.glm, legacy.axes = TRUE, print.auc = TRUE)
+```
+- AUC: 0.554
+
+### Part (e)
+Now fit the logistic regression model using a training data period from 1990 to 2008,
+with Lag1 and Lag2 as the predictors. Plot the ROC curve using the held out data
+(that is, the data from 2009 and 2010) and report the AUC.
+```{r}
+training.data <- Weekly[Weekly$Year < 2009,]
+test.data <- Weekly[Weekly$Year > 2008,]
+
+glm.fit2 = glm(Direction~Lag1+Lag2, 
+               data = training.data,
+               family = binomial)
+summary(glm.fit2)
+
+test.pred.prob2 <- predict(glm.fit2,
+                           newdata = test.data,
+                           type = "response")
+
+roc.glm2 <- roc(test.data$Direction, 
+                test.pred.prob2)
+plot(roc.glm2, legacy.axes = TRUE, print.auc = TRUE)
+```
+- AUC: 0.556
+
+### Part (f)
+Repeat (e) using LDA and QDA.
+```{r}
+#LDA
+lda.fit <- lda(Direction~Lag1 + Lag2,
+               data = training.data)
+summary(lda.fit)
+
+lda.pred.prob <- predict(lda.fit,
+                           newdata = test.data)
+
+head(lda.pred.prob$posterior)
+
+roc.lda <- roc(test.data$Direction, 
+                lda.pred.prob$posterior[,2])
+plot(roc.lda, legacy.axes = TRUE, print.auc = TRUE)
+
+#QDA
+qda.fit <- qda(Direction~Lag1 + Lag2, 
+               data = training.data)
+summary(qda.fit)
+
+qda.pred.prob <- predict(qda.fit,
+                           newdata = test.data)
+
+head(qda.pred.prob$posterior)
+
+roc.qda <- roc(test.data$Direction, 
+                qda.pred.prob$posterior[,2])
+plot(roc.qda, legacy.axes = TRUE, print.auc = TRUE)
+```
+- LDA AUC: 0.557
+- QDA AUC: 0.529
+
+### Part (g)
+Repeat (e) using KNN. Briefly discuss your results.
+```{r}
+set.seed(123)
+train.X <- training.data[, 2:3]
+test.X <- test.data[, 2:3]
+train.Y <- training.data$Direction
+
+set.seed(123)
+
+knn.pred <- knn(train.X, test.X, train.Y, k = 1)
+table(knn.pred, test.data$Direction)
+
+knn5.pred = knn(train.X, test.X, train.Y, k = 5)
+table(knn5.pred, test.data$Direction)
+
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 5,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+knn.fit <- train(Direction ~ Lag1 + Lag2,
+                   data = training.data,
+                   method = "knn",
+                   preProcess = c("center","scale"),
+                   tuneGrid = data.frame(k = seq(1,200,by = 5)),
+                   trControl = ctrl,
+                   metric = "ROC")
+
+ggplot(knn.fit)
+knn.fit$finalModel
+knn.fit$bestTune
+
+knn.pred.prob <- predict(knn.fit, 
+                       newdata = test.data,
+                       type = "prob")[,2]
+
+plot(knn.fit, print.thres = 0.5, type = "S")
+
+roc.knn <- roc(test.data$Direction, 
+                knn.pred.prob)
+
+plot(roc.knn, legacy.axes = TRUE, print.auc = TRUE)
+```
+
+- From our KNN model, we can see that as K gets larger, the amount of true findings increases. Our model, however, seems to be better at finding true positives and worse at finding true negatives (AUC: 0.542). 
