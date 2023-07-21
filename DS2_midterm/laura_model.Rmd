@@ -1,0 +1,191 @@
+---
+title: "Laura_modeling"
+author: "Laura Cosgrove"
+date: "3/28/2019"
+output: github_document
+---
+
+
+```{r, message = FALSE}
+library(tidyverse)
+library(caret)
+library(modelr)
+library(glmnet)
+library(pls)
+```
+
+```{r}
+heart <- read_rds("./data/train_imputed.Rdata") 
+
+x <- model.matrix(heart_disease_mortality_per_100k ~ ., data = heartRDS)[,-1]
+y <- heart$heart_disease_mortality_per_100k
+
+nearZeroVar(x, names = TRUE)
+findLinearCombos(x)$remove
+
+dimnames(x)[[2]][11]
+dimnames(x)[[2]][28]
+dimnames(x)[[2]][40]
+dimnames(x)[[2]][46]
+dimnames(x)[[2]][47]
+#Suggests we have some linear combinations, as we suspected.
+```
+
+Set up `caret` training control. We will use this for all models.
+
+```{r}
+set.seed(100)
+ctrl1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+```
+
+## Ridge
+
+Cross validate to find the optimal lambda value.
+
+```{r}
+set.seed(100)
+
+ridge_fit <- train(x, y,
+                     method = "glmnet",
+                     tuneGrid = expand.grid(alpha = 0, 
+                                            lambda = exp(seq(-2, 10, length = 200))),
+                    trControl = ctrl1)
+
+
+plot(ridge_fit, xTrans = function(x) log(x)) #in correct range
+
+best_lambda_ridge = ridge_fit$bestTune$lambda 
+
+summary(ridge_fit$finalModel)
+
+##centered, scaled coefficients from caret
+predict(ridge_fit$finalModel, s = best_lambda_ridge, type="coefficients") %>% 
+  broom::tidy() %>% 
+  arrange(desc(abs(value))) %>% 
+  knitr::kable()
+
+#saving caret object to rdata
+saveRDS(ridge_fit, "ridge.rds")
+
+```
+
+Our best lambda is `r best_lambda_ridge`, but it's not an entirely stable value because RMSE does not differ substantially in the range; that is, glm chooses a different value: 
+
+```{r}
+#Using Glmnet for visualization 
+ridge_cv_glmnet <- cv.glmnet(x, y, 
+                      alpha = 0, 
+                      lambda = exp(seq(-2, 10, length = 200)), 
+                      type.measure = "mse")
+
+plot(ridge_cv_glmnet, xvar = "lambda", label = TRUE)
+
+plotmo::plot_glmnet(ridge_cv_glmnet$glmnet.fit, xvar = "lambda")
+abline(v = log(best_lambda_ridge), col = "blue")
+
+ridge_cv_table <- tibble(lambda_values = ridge_cv_glmnet$lambda, mse = ridge_cv_glmnet$cvm, mse_upper = ridge_cv_glmnet$cvup, mse_lower = ridge_cv_glmnet$cvlo)
+
+##MSE
+ridge_cv_table_best <- ridge_cv_table %>% 
+  arrange(mse) %>% 
+  slice(which.min(abs(lambda_values - best_lambda_ridge)))
+
+ridge_mse_plot <- ridge_cv_table %>% 
+  filter(lambda_values %in% exp(seq(-2, 5, length = 200))) %>% 
+  ggplot(aes(x = log(lambda_values), y = mse)) +
+  geom_point() +
+  geom_point(aes(x = log(best_lambda_ridge), y = ridge_cv_table_best$mse), color = "red") +
+  geom_ribbon(aes(ymin = mse_lower, ymax = mse_upper), alpha = 0.3)
+  
+ridge_mse_plot + annotate("text", x = 0.5 + log(best_lambda_ridge), y = 1.05*ridge_cv_table_best$mse, label = "Lambda chosen by caret", color = "red")
+#for fun
+```
+
+We can see that all coefficients shrank, but none really shrank to 0. Ridge was not very effective at eliminating coefficients among values of candidate coefficients.
+
+## MARS
+
+We next create a piecewise linear model using multivariate adaptive regression splines (MARS).
+```{r, echo = T, message = FALSE, results='hide', warning=FALSE}
+library(pdp)
+library(earth)
+library(vip)
+library(patchwork)
+```
+Since there are two tuning parameters associated with the MARS model: the degree of interactions and the number of retained terms, we need to perform a grid search to identify the optimal combination of these hyperparameters that minimize prediction error.
+
+```{r}
+set.seed(2)
+
+mars_grid <- expand.grid(degree = 1:3, 
+                         nprune = 10:40) #degree: 1 vs 2 vs 3, no interaction vs. interaction;
+#nprune is number of coef
+
+set.seed(2)
+mars_fit <- train(x, y,
+                 method = "earth",
+                 tuneGrid = mars_grid,
+                 trControl = ctrl1)
+
+ggplot(mars_fit)
+
+mars_fit$bestTune
+
+mars_fit$finalModel$gcv #metric earth uses to choose
+
+#saving caret object to rdata
+saveRDS(mars_fit, "mars.rds")
+set.seed(2)
+
+mars_grid_refined <- expand.grid(degree = 2, 
+                         nprune = 25:40) 
+mars_fit_refined <- train(x, y,
+                 method = "earth",
+                 tuneGrid = mars_grid_refined,
+                 trControl = ctrl1)
+
+ggplot(mars_fit_refined)
+
+mars_fit_refined$bestTune
+summary(mars_fit_refined$finalModel)
+
+mars_fit_refined$finalModel$gcv #metric earth uses to choose
+
+#saving caret object to rdata
+saveRDS(mars_fit_refined, "mars2.rds")
+
+```
+
+To better understand the relationship between these features and `heart_disease_mortality_per_100k`, we can create partial dependence plots (PDPs) for each feature individually and also an interaction PDP. This is used to examine the marginal effects of predictors.
+
+A nice way to visualize especially these black box models. We see that the model fitted by MARS gives a smaller cross validation error, because we're carefully tuning those nonlinear terms.
+
+```{r}
+#Variable importance
+vip::vip(mars_fit_refined, num_features = 55, bar = FALSE, value = "gcv") + ggtitle("GCV")
+vip::vip(mars_fit_refined, num_features = 55, bar = FALSE, value = "rss") + ggtitle("RSS")
+
+#Final coefficients: interactions
+coef(mars_fit_refined$finalModel) %>%
+  broom::tidy() %>% 
+  knitr::kable()
+
+#Partial feature plots
+p1 <- pdp::partial(mars_fit, pred.var = c("health__pct_physical_inacticity"), grid.resolution = 10) %>% autoplot()
+p2 <- pdp::partial(mars_fit, pred.var = c("demo__pct_aged_65_years_and_older"), grid.resolution = 10) %>% autoplot()
+p3 <- pdp::partial(mars_fit, pred.var = c("health__pct_physical_inacticity", "demo__pct_aged_65_years_and_older"), grid.resolution = 10) %>%  plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE, colorkey = TRUE, screen = list(z = -20, x = -60))
+
+gridExtra::grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+
+## Ridge and MARS comparison
+```{r}
+set.seed(100)
+summary(resamples(list(
+  ridge = ridge_fit,
+  MARS = mars_fit)))$statistics$RMSE
+```
+
+
+On average, the MARS fit is slightly better.
