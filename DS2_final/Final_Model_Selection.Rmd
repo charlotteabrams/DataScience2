@@ -1,0 +1,107 @@
+---
+title: "Final Model Selection"
+author: "Laura Cosgrove"
+date: "5/10/2019"
+output: github_document
+---
+
+```{r}
+library(caret)
+library(tidyverse)
+library(pROC)
+```
+
+
+# resamples
+
+```{r}
+gbm_fit = readRDS("./data/gbm_fit_3.RDS")
+xgb_fit = readRDS("./data/xgboost.RDS")
+svm_fit = readRDS("./data/SVM.RDS")
+rf_fit = readRDS("./data/rf.fit.RDS")
+knn_fit = readRDS("./data/knn.RDS")
+nb_fit  = readRDS("./data/nb.RDS")
+logit_fit  = readRDS("./data/logit.RDS")
+logit_int_fit  = readRDS("./data/logit_int.RDS")
+lda_fit = readRDS("./data/lda.RDS")
+cart_fit = readRDS("./data/cart.RDS")
+
+nb_fit$bestTune
+
+gbm_fit$bestTune
+
+xgb_fit$bestTune
+
+rf_fit$bestTune
+
+svm_fit$bestTune
+
+sort(svm_fit$finalModel$coefs)
+
+svm_fit$finalModel$svm_fit$finalModel$coefs
+
+logit_fit
+
+set.seed(2)
+resamp <- resamples(list(xgboost = xgb_fit,
+                         gbm = gbm_fit,
+                        svm = svm_fit,
+                         rf = rf_fit,
+                         knn = knn_fit,
+                         nb = nb_fit,
+                         logistic = logit_fit,
+                        logistic_int = logit_int_fit,
+                         lda = lda_fit, 
+                         cart = cart_fit))
+bwplot(resamp)
+ggplot(resamp)
+summary(resamp)
+
+```
+
+
+Looks like logistic regression it is :) 
+
+# test performance
+```{r}
+cog_test <- readRDS("./data/cog_test_preproc.RDS")
+```
+
+```{r fig.width= 10}
+## Function
+
+confusionMatrix_fcn = function(fit) {
+  test_pred  <- predict(fit, cog_test, type = "raw")
+
+ matrix <- confusionMatrix(data = test_pred, 
+                reference = cog_test$cdr,
+                positive = "Dementia")
+ matrix
+}
+
+roc_fcn = function(fit) {
+test_pred_prob  <- predict(fit, cog_test, type = "prob")
+
+roc_test <- roc(cog_test$cdr, test_pred_prob$Dementia)
+ 
+roc_test$auc[1]
+}
+
+auc_list = list(xgboost = xgb_fit,
+                         gbm = gbm_fit,
+                        svm = svm_fit,
+                         rf = rf_fit,
+                         knn = knn_fit,
+                         nb = nb_fit,
+                         logistic = logit_fit,
+                logistic_int = logit_int_fit,
+                         lda = lda_fit, 
+                         cart = cart_fit) %>%  map(roc_fcn) 
+auc_df = tibble(models = resamp$models, auc = auc_list) %>% 
+  unnest()
+
+ggplot(resamp) + theme_minimal() + 
+  geom_point(data = auc_df, aes(y = auc, x = models), color = "green") + 
+  labs(title = "Cross-Validated AUC",
+       subtitle = "Test AUC in Green")
+```

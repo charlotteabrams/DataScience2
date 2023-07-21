@@ -1,0 +1,72 @@
+---
+title: "Hierarchical Clusters"
+output: github_document
+---
+
+```{r}
+library(tidyverse)
+library(ISLR)
+library(factoextra)
+library(FunCluster)
+library(RColorBrewer)
+library(gplots)
+```
+
+```{r}
+cog_data <- readRDS("./data/cog_data_preproc.RDS")
+cog_train <- readRDS("./data/cog_train_preproc.RDS")
+cog_test <- readRDS("./data/cog_test_preproc.RDS")
+
+cog_data <- readRDS("./data/cog_data_preproc.RDS") %>%
+  dplyr::select(-subject) %>% 
+  na.omit() # omit rows with NA
+
+set.seed(1)
+
+sd.data <- scale(cog_data[, -1])
+
+hc.complete <- hclust(dist(sd.data), method = "complete")
+
+fviz_nbclust(cog_data[, -1],
+             FUNcluster = hcut,
+             k.max = 15,
+             method = "gap",
+             print.summary = TRUE)
+
+#8 clusters
+fviz_dend(hc.complete, k = 8,
+          cex = 0.3,
+          palette = "jco",
+          color_labels_by_k = TRUE,
+          rect = TRUE, rect_fill = TRUE, rect_border = "jco",
+          labels_track_height = 2.5)
+ 
+#4 clusters
+fviz_dend(hc.complete, k = 4,
+          cex = 0.3,
+          palette = "jco",
+          color_labels_by_k = TRUE,
+          rect = TRUE, rect_fill = TRUE, rect_border = "jco",
+          labels_track_height = 2.5)
+
+set.seed(1)
+hc.complete.cut <- cutree(hc.complete, 4)
+
+#cluster 1
+cog_train[3:10][hc.complete.cut == 1,]
+#cluster 2
+cog_train[3:10][hc.complete.cut == 2,]
+#cluster 3
+cog_train[3:10][hc.complete.cut == 3,]
+#cluster 4
+cog_train[3:10][hc.complete.cut == 4,]
+
+col1 <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+
+heatmap.2(t(sd.data),
+          col = col1, keysize = .8, key.par = list(cex = .5),
+          trace = "none", key = TRUE, cexCol = 0.75,
+          labCol = as.character(cog_data[,1]),
+          margins = c(10, 10))
+```
+
